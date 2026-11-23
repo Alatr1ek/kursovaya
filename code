@@ -1,0 +1,694 @@
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+import hashlib
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+class ChessApp:
+    BOARD_SIZE = 8
+
+    LIGHT_COLOR = "#f0d9b5"
+    DARK_COLOR = "#b58863"
+    HIGHLIGHT_COLOR = "#f6f669"
+    LEGAL_MARK_COLOR = "#222222"
+
+    PIECE_SYMBOLS = {
+        "K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙",
+        "k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟",
+        ".": ""
+    }
+
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Эндшпиль: Король, ферзь, пешка — Король, ладья")
+        self.root.minsize(800, 600)
+
+        self.users_file = os.path.join(BASE_DIR, "users_chess.txt")
+
+        self.players = {1: None, 2: None}
+        self.current_player = 1
+
+        self.board = [["."] * self.BOARD_SIZE for _ in range(self.BOARD_SIZE)]
+        self.selected = None
+        self.legal_moves = set()
+
+        self.main_frame = None
+        self.canvas = None
+        self.side_panel = None
+        self.info_label = None
+
+        self.login_window = None
+        self.register_window = None
+        self.login_login_entry = None
+        self.login_pwd_entry = None
+        self.login_label = None
+        self.reg_login_entry = None
+        self.reg_pwd_entry = None
+
+        self.build_menu()
+        self.open_login_window(player=1)
+
+    @staticmethod
+    def hash_password(password: str) -> str:
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+    def load_users(self) -> dict:
+        users = {}
+        if os.path.exists(self.users_file):
+            with open(self.users_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        login, pwd_hash = line.split(";", 1)
+                        users[login] = pwd_hash
+                    except ValueError:
+                        continue
+        return users
+
+    def save_user(self, login: str, pwd_hash: str) -> None:
+        with open(self.users_file, "a", encoding="utf-8") as f:
+            f.write(f"{login};{pwd_hash}\n")
+
+    def build_menu(self):
+        menubar = tk.Menu(self.root)
+
+        game_menu = tk.Menu(menubar, tearoff=0)
+        game_menu.add_command(label="Новая партия", command=self.reset_game)
+        game_menu.add_separator()
+        game_menu.add_command(label="Выход", command=self.root.destroy)
+        menubar.add_cascade(label="Игра", menu=game_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="О программе",
+            command=lambda: messagebox.showinfo(
+                "О программе",
+                "Курсовая: эндшпиль K,Q,P против K,R\n"
+                "Полные правила шахмат: шах, мат, пат.\n"
+                "Python + Tkinter, два игрока за одним ПК."
+            )
+        )
+        menubar.add_cascade(label="Справка", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    def open_login_window(self, player: int):
+        if self.login_window is not None and self.login_window.winfo_exists():
+            self.login_window.destroy()
+
+        self.login_window = tk.Toplevel(self.root)
+        self.login_window.title(f"Вход игрока {player}")
+        self.login_window.resizable(False, False)
+        self.login_window.grab_set()
+        self.login_window.geometry("360x220+200+200")
+
+        title = tk.Label(
+            self.login_window,
+            text="Эндшпиль: Король, ферзь, пешка — Король, ладья",
+            font=("Arial", 11, "bold"),
+            wraplength=340,
+            justify="center"
+        )
+        title.grid(row=0, column=0, columnspan=2, pady=(10, 10), padx=10)
+
+        self.login_label = tk.Label(
+            self.login_window,
+            text=f"Вход игрока {player}",
+            font=("Arial", 11)
+        )
+        self.login_label.grid(row=1, column=0, columnspan=2, pady=(0, 10))
+
+        tk.Label(self.login_window, text="Логин:").grid(
+            row=2, column=0, sticky="e", padx=5, pady=5
+        )
+        self.login_login_entry = tk.Entry(self.login_window, width=24)
+        self.login_login_entry.grid(row=2, column=1, padx=5, pady=5)
+
+        tk.Label(self.login_window, text="Пароль:").grid(
+            row=3, column=0, sticky="e", padx=5, pady=5
+        )
+        self.login_pwd_entry = tk.Entry(self.login_window, show="*", width=24)
+        self.login_pwd_entry.grid(row=3, column=1, padx=5, pady=5)
+
+        btn_login = tk.Button(
+            self.login_window,
+            text="Вход",
+            width=14,
+            command=lambda p=player: self.do_login(p)
+        )
+        btn_login.grid(row=4, column=0, pady=10)
+
+        btn_reg = tk.Button(
+            self.login_window,
+            text="Регистрация",
+            width=14,
+            command=self.open_register_window
+        )
+        btn_reg.grid(row=4, column=1, pady=10)
+
+        hint = tk.Label(
+            self.login_window,
+            text="При отсутствии учётной записи\nвоспользуйтесь регистрацией.",
+            justify="center"
+        )
+        hint.grid(row=5, column=0, columnspan=2, pady=(0, 10))
+
+    def open_register_window(self):
+        if self.register_window is not None and self.register_window.winfo_exists():
+            self.register_window.lift()
+            return
+
+        self.register_window = tk.Toplevel(self.root)
+        self.register_window.title("Регистрация нового пользователя")
+        self.register_window.resizable(False, False)
+        self.register_window.grab_set()
+        self.register_window.geometry("340x190+240+240")
+
+        tk.Label(
+            self.register_window,
+            text="Регистрация пользователя",
+            font=("Arial", 11, "bold")
+        ).grid(row=0, column=0, columnspan=2, pady=(10, 10))
+
+        tk.Label(self.register_window, text="Логин:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=5
+        )
+        self.reg_login_entry = tk.Entry(self.register_window, width=22)
+        self.reg_login_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        tk.Label(self.register_window, text="Пароль:").grid(
+            row=2, column=0, sticky="e", padx=5, pady=5
+        )
+        self.reg_pwd_entry = tk.Entry(self.register_window, show="*", width=22)
+        self.reg_pwd_entry.grid(row=2, column=1, padx=5, pady=5)
+
+        btn_reg = tk.Button(
+            self.register_window,
+            text="Зарегистрировать",
+            width=18,
+            command=self.do_register
+        )
+        btn_reg.grid(row=3, column=0, columnspan=2, pady=(10, 10))
+
+    def do_register(self):
+        if self.reg_login_entry is None or self.reg_pwd_entry is None:
+            return
+
+        login = self.reg_login_entry.get().strip()
+        password = self.reg_pwd_entry.get().strip()
+
+        if not login or not password:
+            messagebox.showwarning("Регистрация", "Логин и пароль не должны быть пустыми.")
+            return
+
+        users = self.load_users()
+        if login in users:
+            messagebox.showwarning("Регистрация", "Пользователь с таким логином уже существует.")
+            return
+
+        pwd_hash = self.hash_password(password)
+        self.save_user(login, pwd_hash)
+        messagebox.showinfo("Регистрация", "Пользователь успешно зарегистрирован.")
+
+        if self.register_window is not None and self.register_window.winfo_exists():
+            self.register_window.destroy()
+            self.register_window = None
+
+    def do_login(self, player: int):
+        if self.login_login_entry is None or self.login_pwd_entry is None:
+            return
+
+        login = self.login_login_entry.get().strip()
+        password = self.login_pwd_entry.get().strip()
+
+        if not login or not password:
+            messagebox.showwarning("Вход", "Введите логин и пароль.")
+            return
+
+        users = self.load_users()
+        pwd_hash = self.hash_password(password)
+
+        if users.get(login) != pwd_hash:
+            messagebox.showerror("Вход", "Неверный логин или пароль.")
+            return
+
+        self.players[player] = login
+
+        if self.login_window is not None and self.login_window.winfo_exists():
+            self.login_window.destroy()
+            self.login_window = None
+
+        if player == 1:
+            self.open_login_window(player=2)
+        else:
+            self.start_game()
+
+    def build_main_frame(self):
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill="both", expand=True)
+
+        self.main_frame.columnconfigure(0, weight=3)
+        self.main_frame.columnconfigure(1, weight=1)
+        self.main_frame.rowconfigure(0, weight=1)
+
+        board_container = tk.Frame(self.main_frame, bg="#333333")
+        board_container.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        self.canvas = tk.Canvas(board_container, bg="#333333", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+
+        self.side_panel = tk.Frame(self.main_frame, bd=2, relief="groove")
+        self.side_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 10), pady=10)
+
+        self.side_panel.rowconfigure(2, weight=1)
+
+        title = tk.Label(
+            self.side_panel,
+            text="Режим игры",
+            font=("Arial", 14, "bold")
+        )
+        title.grid(row=0, column=0, pady=(10, 5), padx=10, sticky="w")
+
+        self.info_label = tk.Label(
+            self.side_panel,
+            text=f"Ход игрока {self.current_player}",
+            font=("Arial", 12)
+        )
+        self.info_label.grid(row=1, column=0, pady=5, padx=10, sticky="w")
+
+        sep = tk.Frame(self.side_panel, height=2, bd=1, relief="sunken")
+        sep.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
+
+        btn_new = tk.Button(
+            self.side_panel,
+            text="Новая партия",
+            width=18,
+            command=self.reset_game
+        )
+        btn_new.grid(row=3, column=0, pady=(10, 5), padx=10, sticky="w")
+
+        btn_exit = tk.Button(
+            self.side_panel,
+            text="Выход",
+            width=18,
+            command=self.root.destroy
+        )
+        btn_exit.grid(row=4, column=0, pady=(0, 10), padx=10, sticky="w")
+
+        self.init_board()
+        self.redraw_board()
+        self.update_info_label()
+
+    def start_game(self):
+        self.current_player = 1
+        self.selected = None
+        self.legal_moves = set()
+        self.build_main_frame()
+
+    def init_board(self):
+        self.board = [["."] * self.BOARD_SIZE for _ in range(self.BOARD_SIZE)]
+        self.board[7][4] = "K"
+        self.board[7][3] = "Q"
+        self.board[6][4] = "P"
+        self.board[0][4] = "k"
+        self.board[0][0] = "r"
+
+    def reset_game(self):
+        if self.main_frame is None:
+            return
+        self.current_player = 1
+        self.selected = None
+        self.legal_moves = set()
+        self.init_board()
+        self.update_info_label()
+        self.redraw_board()
+
+    def update_info_label(self):
+        if self.info_label is not None:
+            name = self.players.get(self.current_player) or f"Игрок {self.current_player}"
+            prefix = ""
+            if self.is_in_check(self.board, self.current_player):
+                prefix = "Шах! "
+            self.info_label.config(text=f"{prefix}Ход игрока {self.current_player}: {name}")
+
+    def on_canvas_resize(self, event):
+        self.redraw_board()
+
+    def redraw_board(self):
+        if self.canvas is None:
+            return
+        self.canvas.delete("all")
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        if width <= 0 or height <= 0:
+            return
+
+        size = min(width, height)
+        cell = size / self.BOARD_SIZE
+        offset_x = (width - size) / 2
+        offset_y = (height - size) / 2
+
+        for r in range(self.BOARD_SIZE):
+            for c in range(self.BOARD_SIZE):
+                x1 = offset_x + c * cell
+                y1 = offset_y + r * cell
+                x2 = x1 + cell
+                y2 = y1 + cell
+
+                base_color = self.LIGHT_COLOR if (r + c) % 2 == 0 else self.DARK_COLOR
+                fill = base_color
+                if self.selected == (r, c):
+                    fill = self.HIGHLIGHT_COLOR
+
+                self.canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    fill=fill,
+                    outline="#444444"
+                )
+
+                piece = self.board[r][c]
+                symbol = self.PIECE_SYMBOLS.get(piece, "")
+                if symbol:
+                    fg = "#ffffff" if piece.isupper() else "#000000"
+                    self.canvas.create_text(
+                        (x1 + x2) / 2,
+                        (y1 + y2) / 2,
+                        text=symbol,
+                        fill=fg,
+                        font=("DejaVu Sans", int(cell * 0.6), "bold")
+                    )
+
+        for (r, c) in self.legal_moves:
+            x1 = offset_x + c * cell
+            y1 = offset_y + r * cell
+            x2 = x1 + cell
+            y2 = y1 + cell
+            margin = cell * 0.3
+            self.canvas.create_oval(
+                x1 + margin,
+                y1 + margin,
+                x2 - margin,
+                y2 - margin,
+                outline=self.LEGAL_MARK_COLOR,
+                width=2
+            )
+
+    def on_canvas_click(self, event):
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        size = min(width, height)
+        if size <= 0:
+            return
+        cell = size / self.BOARD_SIZE
+        offset_x = (width - size) / 2
+        offset_y = (height - size) / 2
+
+        col = int((event.x - offset_x) // cell)
+        row = int((event.y - offset_y) // cell)
+
+        if 0 <= row < self.BOARD_SIZE and 0 <= col < self.BOARD_SIZE:
+            self.handle_cell_click(row, col)
+
+    def handle_cell_click(self, r, c):
+        piece = self.board[r][c]
+
+        if self.selected is None:
+            if piece != "." and self.owner_of(piece) == self.current_player:
+                self.selected = (r, c)
+                self.legal_moves = self.get_legal_moves_for_piece(self.board, self.current_player, r, c)
+                self.redraw_board()
+            return
+
+        sr, sc = self.selected
+
+        if (r, c) == (sr, sc):
+            self.selected = None
+            self.legal_moves = set()
+            self.redraw_board()
+            return
+
+        if (r, c) not in self.legal_moves:
+            self.selected = None
+            self.legal_moves = set()
+            self.redraw_board()
+            return
+
+        moving_piece = self.board[sr][sc]
+
+        self.board[r][c] = moving_piece
+        self.board[sr][sc] = "."
+
+        self.promote_if_needed(r, c)
+
+        self.selected = None
+        self.legal_moves = set()
+        self.redraw_board()
+
+        self.switch_player_after_move()
+
+    @staticmethod
+    def owner_of(piece: str):
+        if not piece or piece == ".":
+            return None
+        return 1 if piece.isupper() else 2
+
+    def path_clear_on_board(self, board, sr, sc, tr, tc):
+        dr = tr - sr
+        dc = tc - sc
+        step_r = 0 if dr == 0 else (1 if dr > 0 else -1)
+        step_c = 0 if dc == 0 else (1 if dc > 0 else -1)
+        r = sr + step_r
+        c = sc + step_c
+        while (r, c) != (tr, tc):
+            if board[r][c] != ".":
+                return False
+            r += step_r
+            c += step_c
+        return True
+
+    def attacks_square(self, board, sr, sc, tr, tc):
+        piece = board[sr][sc]
+        if piece == ".":
+            return False
+        owner = self.owner_of(piece)
+        dr = tr - sr
+        dc = tc - sc
+        adr = abs(dr)
+        adc = abs(dc)
+        p = piece.upper()
+
+        if p == "P":
+            direction = -1 if owner == 1 else 1
+            return dr == direction and adc == 1
+
+        if p == "N":
+            return (adr, adc) in ((1, 2), (2, 1))
+
+        if p == "B":
+            if adr == adc and adr > 0:
+                return self.path_clear_on_board(board, sr, sc, tr, tc)
+            return False
+
+        if p == "R":
+            if dr == 0 or dc == 0:
+                return self.path_clear_on_board(board, sr, sc, tr, tc)
+            return False
+
+        if p == "Q":
+            if dr == 0 or dc == 0 or adr == adc:
+                return self.path_clear_on_board(board, sr, sc, tr, tc)
+            return False
+
+        if p == "K":
+            return max(adr, adc) == 1
+
+        return False
+
+    def find_king(self, board, player: int):
+        target = "K" if player == 1 else "k"
+        for r in range(self.BOARD_SIZE):
+            for c in range(self.BOARD_SIZE):
+                if board[r][c] == target:
+                    return r, c
+        return None
+
+    def is_in_check(self, board, player: int) -> bool:
+        king_pos = self.find_king(board, player)
+        if king_pos is None:
+            return False
+        kr, kc = king_pos
+        opponent = 2 if player == 1 else 1
+        for r in range(self.BOARD_SIZE):
+            for c in range(self.BOARD_SIZE):
+                piece = board[r][c]
+                if piece == ".":
+                    continue
+                if self.owner_of(piece) == opponent:
+                    if self.attacks_square(board, r, c, kr, kc):
+                        return True
+        return False
+
+    def is_pseudo_legal_move(self, board, sr, sc, tr, tc, player: int) -> bool:
+        if not (0 <= tr < self.BOARD_SIZE and 0 <= tc < self.BOARD_SIZE):
+            return False
+        if sr == tr and sc == tc:
+            return False
+
+        piece = board[sr][sc]
+        if piece == ".":
+            return False
+        if self.owner_of(piece) != player:
+            return False
+
+        target = board[tr][tc]
+        if target != "." and self.owner_of(target) == player:
+            return False
+
+        if target != "." and target.upper() == "K" and self.owner_of(target) != player:
+            return False
+
+        dr = tr - sr
+        dc = tc - sc
+        adr = abs(dr)
+        adc = abs(dc)
+        p = piece.upper()
+
+        if p == "K":
+            if max(adr, adc) != 1:
+                return False
+            return True
+
+        if p == "Q":
+            if dr == 0 or dc == 0 or adr == adc:
+                return self.path_clear_on_board(board, sr, sc, tr, tc)
+            return False
+
+        if p == "R":
+            if dr == 0 or dc == 0:
+                return self.path_clear_on_board(board, sr, sc, tr, tc)
+            return False
+
+        if p == "B":
+            if adr == adc and adr > 0:
+                return self.path_clear_on_board(board, sr, sc, tr, tc)
+            return False
+
+        if p == "N":
+            return (adr, adc) in ((1, 2), (2, 1))
+
+        if p == "P":
+            owner = self.owner_of(piece)
+            direction = -1 if owner == 1 else 1
+            start_row = 6 if owner == 1 else 1
+
+            if dc == 0 and dr == direction and target == ".":
+                return True
+            if dc == 0 and sr == start_row and dr == 2 * direction and target == ".":
+                intermediate_row = sr + direction
+                if board[intermediate_row][sc] == ".":
+                    return True
+            if adc == 1 and dr == direction and target != "." and self.owner_of(target) != player:
+                return True
+            return False
+
+        return False
+
+    def is_move_legal(self, board, sr, sc, tr, tc, player: int) -> bool:
+        if not self.is_pseudo_legal_move(board, sr, sc, tr, tc, player):
+            return False
+
+        tmp = [row[:] for row in board]
+        moving_piece = tmp[sr][sc]
+        tmp[tr][tc] = moving_piece
+        tmp[sr][sc] = "."
+
+        if self.is_in_check(tmp, player):
+            return False
+
+        return True
+
+    def get_legal_moves_for_piece(self, board, player: int, sr, sc):
+        moves = set()
+        if board[sr][sc] == "." or self.owner_of(board[sr][sc]) != player:
+            return moves
+        for tr in range(self.BOARD_SIZE):
+            for tc in range(self.BOARD_SIZE):
+                if self.is_move_legal(board, sr, sc, tr, tc, player):
+                    moves.add((tr, tc))
+        return moves
+
+    def has_any_legal_moves(self, board, player: int) -> bool:
+        for r in range(self.BOARD_SIZE):
+            for c in range(self.BOARD_SIZE):
+                if board[r][c] != "." and self.owner_of(board[r][c]) == player:
+                    if self.get_legal_moves_for_piece(board, player, r, c):
+                        return True
+        return False
+
+    def promote_if_needed(self, r, c):
+        piece = self.board[r][c]
+        if piece.upper() != "P":
+            return
+
+        owner = self.owner_of(piece)
+        if owner == 1 and r == 0:
+            choice = simpledialog.askstring(
+                "Промоция",
+                "Выберите фигуру для превращения (Q, R, B, N):",
+                initialvalue="Q",
+                parent=self.root
+            )
+            if not choice:
+                choice = "Q"
+            choice = choice.upper()
+            if choice not in ("Q", "R", "B", "N"):
+                choice = "Q"
+            self.board[r][c] = choice
+        elif owner == 2 and r == self.BOARD_SIZE - 1:
+            choice = simpledialog.askstring(
+                "Промоция",
+                "Выберите фигуру для превращения (q, r, b, n):",
+                initialvalue="q",
+                parent=self.root
+            )
+            if not choice:
+                choice = "q"
+            choice = choice.lower()
+            if choice not in ("q", "r", "b", "n"):
+                choice = "q"
+            self.board[r][c] = choice
+
+    def switch_player_after_move(self):
+        self.current_player = 2 if self.current_player == 1 else 1
+
+        in_check = self.is_in_check(self.board, self.current_player)
+        has_moves = self.has_any_legal_moves(self.board, self.current_player)
+
+        if in_check and not has_moves:
+            winner = 2 if self.current_player == 1 else 1
+            name = self.players.get(winner) or f"Игрок {winner}"
+            messagebox.showinfo("Мат", f"Шах и мат. Победил {name}.")
+            self.reset_game()
+            return
+
+        if not in_check and not has_moves:
+            messagebox.showinfo("Пат", "Патовая позиция. Ничья.")
+            self.reset_game()
+            return
+
+        self.update_info_label()
+
+    def run(self):
+        self.root.mainloop()
+
+
+if __name__ == "__main__":
+    app = ChessApp()
+    app.run()
